@@ -35,7 +35,7 @@ export async function POST(req: Request) {
   );
 
   const data = await res.json();
-console.log("GEMINI RESPONSE:", JSON.stringify(data, null, 2));
+
   const message =
     data?.candidates?.[0]?.content?.parts?.[0]?.text;
 

@@ -1,11 +1,9 @@
 "use client";
 
 import { useState } from "react";
-
-const cities = {
-  tokyo: { name: "東京", lat: 35.6812, lon: 139.7671 },
-  osaka: { name: "大阪", lat: 34.6937, lon: 135.5023 },
-};
+import { prefectures } from "@/data/prefectures";
+import { fetchWeather } from "@/lib/weather";
+import { fetchComment } from "@/lib/comment";
 
 const getWeatherLabel = (code: number) => {
   if (code === 0) return "☀️ 晴れ";
@@ -17,21 +15,50 @@ const getWeatherLabel = (code: number) => {
 
 export default function Home() {
   const [weather, setWeather] = useState<any>(null);
-  const [cityKey, setCityKey] = useState<keyof typeof cities>("tokyo");
+  const [city, setCity] = useState(prefectures[0]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [comment, setComment] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
 
-  const getWeather = async (key: keyof typeof cities) => {
+  const getWeather = async (p: any) => {
     setLoading(true);
     setError(null);
     setComment(null);
 
     try {
-      const city = cities[key];
+      const weatherData = await fetchWeather(p.lat, p.lon);
+      setWeather(weatherData);
+      setCity(p);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  const getLocationWeather = () => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+
+        getWeatherByLocation(lat, lon);
+      },
+      (err) => {
+        console.error(err);
+        alert("位置情報の取得に失敗しました");
+      }
+    );
+  };
+
+  const getWeatherByLocation = async (lat: number, lon: number) => {
+    setLoading(true);
+    setError(null);
+
+    try {
       const res = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&current_weather=true`
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`
       );
 
       const data = await res.json();
@@ -41,7 +68,7 @@ export default function Home() {
       }
 
       setWeather(data.current_weather);
-      setCityKey(key);
+      setCity({ name: "現在地", lat, lon });
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -52,19 +79,20 @@ export default function Home() {
   const getComment = async () => {
     if (!weather) return;
 
-    const res = await fetch("/api/comment", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    setAiLoading(true);
+
+    try {
+      const data = await fetchComment({
         temperature: weather.temperature,
         weather: weather.weathercode,
-      }),
-    });
-
-    const data = await res.json();
-    setComment(data.message);
+      });
+      console.log("COMMENT RAW:", data);
+      setComment(data.message);
+    } catch (e) {
+      setComment("AIの取得に失敗しました");
+    } finally {
+      setAiLoading(false);
+    }
   };
 
   return (
@@ -72,22 +100,39 @@ export default function Home() {
 
       {/* タイトル */}
       <h1 className="text-3xl font-bold text-gray-800 mb-6">
-        🌤️ Weather Dashboard🐇
+        🌤️ Weather Dashboard
       </h1>
 
       {/* 都市ボタン */}
-      <div className="flex gap-3 mb-6">
-        {Object.keys(cities).map((key) => (
-          <button
-            key={key}
-            onClick={() => getWeather(key as keyof typeof cities)}
-            className={`px-5 py-2 rounded-full shadow transition
-              ${cityKey === key ? "bg-indigo-600 text-white" : "bg-white text-gray-700 hover:bg-gray-100"}
-            `}
-          >
-            {cities[key as keyof typeof cities].name}
-          </button>
-        ))}
+      <div className="flex gap-3 mb-6 items-center">
+        
+        {/* ドロップダウン */}
+        <select
+          value={city.name}
+          onChange={(e) => {
+            const selected = prefectures.find(p => p.name === e.target.value);
+            if (selected) getWeather(selected);
+          }}
+          className="px-4 py-2 rounded-lg shadow bg-white"
+        >
+          <option value="" disabled>
+            都道府県を選択
+          </option>
+
+          {prefectures.map((p) => (
+            <option key={p.name} value={p.name}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+
+        {/* 現在地ボタン */}
+        <button
+          onClick={getLocationWeather}
+          className="px-4 py-2 bg-green-500 text-white rounded-lg shadow hover:bg-green-600 transition"
+        >
+          📍 現在地
+        </button>
       </div>
 
       {/* ローディング */}
@@ -110,7 +155,7 @@ export default function Home() {
         <div className="bg-white/80 backdrop-blur-lg shadow-2xl rounded-3xl p-8 w-80 text-center mt-6 transform transition hover:scale-105">
 
           <h2 className="text-xl font-semibold text-gray-700">
-            {cities[cityKey].name}
+            {city.name}
           </h2>
 
           <div className="text-6xl font-bold mt-3 text-gray-800">
@@ -138,6 +183,13 @@ export default function Home() {
         </div>
       )}
 
+      {aiLoading && (
+        <div className="mt-4 flex flex-col items-center text-gray-600">
+          <div className="w-8 h-8 border-4 border-pink-400 border-t-transparent rounded-full animate-spin"></div>
+          <p className="mt-2 animate-pulse">🐰 AIが考え中...</p>
+        </div>
+      )}
+
       {/* AI吹き出し */}
       {comment && (
         <div className="mt-6 flex justify-center">
@@ -156,7 +208,7 @@ export default function Home() {
       {/* 初期状態 */}
       {!weather && !loading && (
         <p className="text-gray-600 mt-10">
-          都市を選ぶと天気が表示されます ☝️
+          都市を選ぶと天気が表示されます
         </p>
       )}
 
