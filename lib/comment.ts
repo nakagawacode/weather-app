@@ -1,4 +1,15 @@
-export const fetchComment = async (payload: any) => {
+type CommentRequest = {
+  temperature: number;
+  weather: number;
+};
+
+type CommentResponse = {
+  message: string;
+};
+
+export const fetchComment = async (
+  payload: CommentRequest
+): Promise<CommentResponse> => {
   const res = await fetch("/api/comment", {
     method: "POST",
     headers: {
