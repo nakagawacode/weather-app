@@ -37,7 +37,7 @@ button {
 }
 
 button:disabled {
-  cursor: wait;
+  cursor: not-allowed;
 }
 
 .weather-shell {
@@ -196,7 +196,14 @@ button:disabled {
   position: relative;
   overflow: hidden;
   display: grid;
-  gap: 22px;
+  grid-template-columns: minmax(0, 1fr) clamp(112px, 28vw, 178px);
+  grid-template-areas:
+    "top icon"
+    "temp icon"
+    "metrics metrics"
+    "action action";
+  column-gap: 18px;
+  row-gap: 8px;
   padding: clamp(22px, 4vw, 34px);
   border: 1px solid #bfb7a8;
   border-radius: 5px;
@@ -221,57 +228,35 @@ button:disabled {
 }
 
 .panel-topline {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  align-items: flex-start;
+  display: block;
+  grid-area: top;
 }
 
 .condition {
-  margin-top: 4px;
+  margin-top: 2px;
   color: var(--ink);
   font-size: clamp(1.3rem, 4vw, 2rem);
   font-weight: 750;
+  line-height: 1.1;
 }
 
 .weather-mark {
-  width: clamp(58px, 16vw, 92px);
+  width: 100%;
   aspect-ratio: 1;
-  border: 1px solid rgba(32, 32, 29, 0.2);
-  border-radius: 50%;
-  background: #d8a14c;
-  box-shadow: inset -12px -10px 0 rgba(32, 32, 29, 0.08);
-}
-
-.weather-panel--cloud .weather-mark {
-  border-radius: 38% 62% 48% 52%;
-  background: #aeb7b9;
-}
-
-.weather-panel--mist .weather-mark {
-  background:
-    repeating-linear-gradient(
-      0deg,
-      rgba(255, 255, 255, 0.55) 0 7px,
-      rgba(117, 126, 126, 0.45) 7px 13px
-    ),
-    #a5aeaa;
-}
-
-.weather-panel--rain .weather-mark {
-  border-radius: 48% 52% 54% 46%;
-  background:
-    linear-gradient(115deg, transparent 0 42%, rgba(255, 255, 255, 0.55) 42% 46%, transparent 46%),
-    #496f84;
-}
-
-.weather-panel--unknown .weather-mark {
-  background: #c2b7a4;
+  grid-area: icon;
+  align-self: start;
+  display: block;
+  border: 1px solid rgba(32, 32, 29, 0.16);
+  border-radius: 12px;
+  object-fit: cover;
+  box-shadow: 0 10px 24px rgba(68, 55, 39, 0.12);
 }
 
 .temperature-readout {
+  grid-area: temp;
   display: flex;
   align-items: flex-start;
+  margin-top: -10px;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
@@ -290,19 +275,15 @@ button:disabled {
 }
 
 .metrics {
+  grid-area: metrics;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   border-top: 1px solid rgba(32, 32, 29, 0.18);
   border-bottom: 1px solid rgba(32, 32, 29, 0.18);
 }
 
 .metrics div {
   padding: 14px 0;
-}
-
-.metrics div + div {
-  padding-left: 18px;
-  border-left: 1px solid rgba(32, 32, 29, 0.18);
 }
 
 .metrics dd {
@@ -313,6 +294,7 @@ button:disabled {
 }
 
 .primary-action {
+  grid-area: action;
   width: fit-content;
   padding: 0 20px;
   color: #fffaf0;
@@ -325,6 +307,7 @@ button:disabled {
 
 .primary-action:disabled {
   color: #e5ded2;
+  cursor: not-allowed;
   background: #68655f;
   border-color: #68655f;
 }
@@ -486,6 +469,7 @@ button:disabled {
 
 .reaction-button:disabled {
   color: var(--muted);
+  cursor: not-allowed;
   border-color: var(--line);
 }
 

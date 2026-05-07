@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { prefectures } from "@/data/prefectures";
 import { fetchWeather } from "@/lib/weather";
@@ -7,6 +8,14 @@ import { fetchComment } from "@/lib/comment";
 import { supabase } from "@/lib/supabase";
 
 type Prefecture = (typeof prefectures)[number];
+
+type CurrentLocation = {
+  name: "現在地";
+  lat: number;
+  lon: number;
+};
+
+type SelectedArea = Prefecture | CurrentLocation;
 
 type Weather = {
   temperature: number;
@@ -48,9 +57,25 @@ const getWeatherTone = (code: number) => {
   return "unknown";
 };
 
+const getWeatherImage = (code: number) => {
+  return `/weather/${getWeatherTone(code)}-pictogram.png`;
+};
+
+const getNearestPrefecture = (lat: number, lon: number) => {
+  return prefectures.reduce((nearest, prefecture) => {
+    const nearestDistance =
+      (nearest.lat - lat) ** 2 + (nearest.lon - lon) ** 2;
+    const prefectureDistance =
+      (prefecture.lat - lat) ** 2 + (prefecture.lon - lon) ** 2;
+
+    return prefectureDistance < nearestDistance ? prefecture : nearest;
+  }, prefectures[0]);
+};
+
 export default function Home() {
   const [weather, setWeather] = useState<Weather | null>(null);
-  const [city, setCity] = useState(prefectures[0]);
+  const [city, setCity] = useState<SelectedArea | null>(null);
+  const [chatRoom, setChatRoom] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [comment, setComment] = useState<string | null>(null);
@@ -64,6 +89,14 @@ export default function Home() {
   const presenceIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!chatRoom) {
+      setChatMessages([]);
+      setChatInput("");
+      setChatError(null);
+      setChatLoading(false);
+      return;
+    }
+
     const loadChatMessages = async () => {
       setChatLoading(true);
       setChatError(null);
@@ -71,7 +104,7 @@ export default function Home() {
       const { data, error } = await supabase
         .from("weather_chat_messages")
         .select("id, room, kind, body, created_at")
-        .eq("room", city.name)
+        .eq("room", chatRoom)
         .gte("created_at", getChatExpirationCutoff())
         .order("created_at", { ascending: false })
         .limit(30);
@@ -87,18 +120,20 @@ export default function Home() {
     };
 
     loadChatMessages();
-  }, [city.name]);
+  }, [chatRoom]);
 
   useEffect(() => {
+    if (!chatRoom) return;
+
     const channel = supabase
-      .channel(`weather-chat:${city.name}`)
+      .channel(`weather-chat:${chatRoom}`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "weather_chat_messages",
-          filter: `room=eq.${city.name}`,
+          filter: `room=eq.${chatRoom}`,
         },
         (payload) => {
           const incoming = payload.new as ChatMessage;
@@ -121,14 +156,19 @@ export default function Home() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [city.name]);
+  }, [chatRoom]);
 
   useEffect(() => {
+    if (!chatRoom) {
+      setViewerCount(0);
+      return;
+    }
+
     if (!presenceIdRef.current) {
       presenceIdRef.current = crypto.randomUUID();
     }
 
-    const channel = supabase.channel(`weather-presence:${city.name}`, {
+    const channel = supabase.channel(`weather-presence:${chatRoom}`, {
       config: {
         presence: {
           key: presenceIdRef.current,
@@ -151,7 +191,7 @@ export default function Home() {
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           await channel.track({
-            room: city.name,
+            room: chatRoom,
             online_at: new Date().toISOString(),
           });
         }
@@ -165,7 +205,7 @@ export default function Home() {
       setViewerCount(0);
       supabase.removeChannel(channel);
     };
-  }, [city.name]);
+  }, [chatRoom]);
 
   const getWeather = async (p: Prefecture) => {
     setLoading(true);
@@ -176,6 +216,7 @@ export default function Home() {
       const weatherData = await fetchWeather(p.lat, p.lon);
       setWeather(weatherData);
       setCity(p);
+      setChatRoom(p.name);
     } catch (err: unknown) {
       setError(getErrorMessage(err));
     } finally {
@@ -215,6 +256,7 @@ export default function Home() {
 
       setWeather(data.current_weather);
       setCity({ name: "現在地", lat, lon });
+      setChatRoom(getNearestPrefecture(lat, lon).name);
     } catch (err: unknown) {
       setError(getErrorMessage(err));
     } finally {
@@ -245,7 +287,7 @@ export default function Home() {
     event.preventDefault();
 
     const body = chatInput.trim();
-    if (!body || chatSending) return;
+    if (!chatRoom || !body || chatSending) return;
 
     setChatSending(true);
     setChatError(null);
@@ -253,7 +295,7 @@ export default function Home() {
     const { data, error } = await supabase
       .from("weather_chat_messages")
       .insert({
-        room: city.name,
+        room: chatRoom,
         kind: "message",
         body,
       })
@@ -279,7 +321,7 @@ export default function Home() {
   };
 
   const sendReaction = async (body: string) => {
-    if (chatSending) return;
+    if (!chatRoom || chatSending) return;
 
     setChatSending(true);
     setChatError(null);
@@ -287,7 +329,7 @@ export default function Home() {
     const { data, error } = await supabase
       .from("weather_chat_messages")
       .insert({
-        room: city.name,
+        room: chatRoom,
         kind: "reaction",
         body,
       })
@@ -315,7 +357,6 @@ export default function Home() {
     <main className="weather-shell">
       <section className="weather-console" aria-label="Weather dashboard">
         <header className="weather-header">
-          <p className="eyebrow">Open-Meteo / Current Conditions</p>
           <div>
             <h1>Weather Board</h1>
             <p className="lead">都道府県を選んで、現在の空模様を確認します。</p>
@@ -326,7 +367,7 @@ export default function Home() {
           <label className="field">
             <span>Area</span>
             <select
-              value={city.name}
+              value={city?.name === "現在地" ? "" : city?.name ?? ""}
               onChange={(e) => {
                 const selected = prefectures.find(
                   (p) => p.name === e.target.value
@@ -372,11 +413,18 @@ export default function Home() {
           >
             <div className="panel-topline">
               <div>
-                <p className="city-label">{city.name}</p>
                 <p className="condition">{getWeatherLabel(weather.weathercode)}</p>
               </div>
-              <span className="weather-mark" aria-hidden="true" />
             </div>
+
+            <Image
+              className="weather-mark"
+              src={getWeatherImage(weather.weathercode)}
+              alt=""
+              aria-hidden="true"
+              width={340}
+              height={340}
+            />
 
             <div className="temperature-readout">
               <span>{Math.round(weather.temperature)}</span>
@@ -385,12 +433,8 @@ export default function Home() {
 
             <dl className="metrics">
               <div>
-                <dt>Wind</dt>
+                <dt>風速</dt>
                 <dd>{weather.windspeed} m/s</dd>
-              </div>
-              <div>
-                <dt>Code</dt>
-                <dd>{weather.weathercode}</dd>
               </div>
             </dl>
 
@@ -425,82 +469,84 @@ export default function Home() {
           </div>
         )}
 
-        <section className="chat-panel" aria-label={`${city.name}のチャット`}>
-          <div className="chat-header">
-            <div>
-              <p className="comment-label">Local Chat</p>
-              <h2>{city.name}の空模様</h2>
+        {chatRoom && (
+          <section className="chat-panel" aria-label={`${chatRoom}のチャット`}>
+            <div className="chat-header">
+              <div>
+                <p className="comment-label">Local Chat</p>
+                <h2>{chatRoom}の空模様</h2>
+              </div>
+              <div className="chat-stats">
+                <span>閲覧中 {viewerCount}</span>
+                <span>{chatMessages.length} messages</span>
+              </div>
             </div>
-            <div className="chat-stats">
-              <span>閲覧中 {viewerCount}</span>
-              <span>{chatMessages.length} messages</span>
+
+            <div className="chat-log">
+              {chatLoading && <p className="chat-muted">読み込み中...</p>}
+
+              {!chatLoading && chatMessages.length === 0 && (
+                <p className="chat-muted">まだ投稿がありません。</p>
+              )}
+
+              {!chatLoading &&
+                chatMessages.map((message) => (
+                  <article
+                    className={`chat-message chat-message--${message.kind}`}
+                    key={message.id}
+                  >
+                    <p>{message.body}</p>
+                    <time dateTime={message.created_at}>
+                      {new Date(message.created_at).toLocaleTimeString("ja-JP", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </time>
+                  </article>
+                ))}
             </div>
-          </div>
 
-          <div className="chat-log">
-            {chatLoading && <p className="chat-muted">読み込み中...</p>}
+            <div className="reaction-row" aria-label="天気リアクション">
+              {weatherReactions.map((reaction) => (
+                <button
+                  className="reaction-button"
+                  disabled={chatSending}
+                  key={reaction}
+                  onClick={() => sendReaction(reaction)}
+                  type="button"
+                >
+                  {reaction}
+                </button>
+              ))}
+            </div>
 
-            {!chatLoading && chatMessages.length === 0 && (
-              <p className="chat-muted">まだ投稿がありません。</p>
+            {chatError && (
+              <p className="chat-error" role="alert">
+                {chatError}
+              </p>
             )}
 
-            {!chatLoading &&
-              chatMessages.map((message) => (
-                <article
-                  className={`chat-message chat-message--${message.kind}`}
-                  key={message.id}
-                >
-                  <p>{message.body}</p>
-                  <time dateTime={message.created_at}>
-                    {new Date(message.created_at).toLocaleTimeString("ja-JP", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </time>
-                </article>
-              ))}
-          </div>
-
-          <div className="reaction-row" aria-label="天気リアクション">
-            {weatherReactions.map((reaction) => (
+            <form className="chat-form" onSubmit={sendChatMessage}>
+              <label className="chat-input">
+                <span>Message</span>
+                <textarea
+                  value={chatInput}
+                  onChange={(event) => setChatInput(event.target.value)}
+                  maxLength={240}
+                  rows={3}
+                  placeholder={`${chatRoom}の天気について投稿`}
+                />
+              </label>
               <button
-                className="reaction-button"
-                disabled={chatSending}
-                key={reaction}
-                onClick={() => sendReaction(reaction)}
-                type="button"
+                className="primary-action"
+                disabled={!chatInput.trim() || chatSending}
+                type="submit"
               >
-                {reaction}
+                {chatSending ? "送信中..." : "投稿"}
               </button>
-            ))}
-          </div>
-
-          {chatError && (
-            <p className="chat-error" role="alert">
-              {chatError}
-            </p>
-          )}
-
-          <form className="chat-form" onSubmit={sendChatMessage}>
-            <label className="chat-input">
-              <span>Message</span>
-              <textarea
-                value={chatInput}
-                onChange={(event) => setChatInput(event.target.value)}
-                maxLength={240}
-                rows={3}
-                placeholder={`${city.name}の天気について投稿`}
-              />
-            </label>
-            <button
-              className="primary-action"
-              disabled={!chatInput.trim() || chatSending}
-              type="submit"
-            >
-              {chatSending ? "送信中..." : "投稿"}
-            </button>
-          </form>
-        </section>
+            </form>
+          </section>
+        )}
       </section>
     </main>
   );
