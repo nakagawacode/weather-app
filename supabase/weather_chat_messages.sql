@@ -3,6 +3,7 @@ create table if not exists public.weather_chat_messages (
   room text not null,
   kind text not null default 'message',
   body text not null,
+  image_path text,
   created_at timestamptz not null default now()
 );
 
@@ -17,9 +18,13 @@ create policy "Anyone can post weather chat messages"
 on public.weather_chat_messages
 for insert
 with check (
-  kind in ('message', 'reaction')
+  kind in ('message', 'reaction', 'image')
   and length(body) between 1 and 240
   and length(room) between 1 and 40
+  and (
+    kind <> 'image'
+    or image_path is not null
+  )
 );
 
 alter publication supabase_realtime

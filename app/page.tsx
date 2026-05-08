@@ -26,12 +26,15 @@ type Weather = {
 type ChatMessage = {
   id: string;
   room: string;
-  kind: "message" | "reaction";
+  kind: "message" | "reaction" | "image";
   body: string;
+  image_path: string | null;
   created_at: string;
 };
 
 const weatherReactions = ["雨きた", "暑い", "風つよい", "洗濯いける"];
+const chatImageBucket = "weather-chat-images";
+const maxChatImageSize = 3 * 1024 * 1024;
 
 const getChatExpirationCutoff = () => {
   return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -61,6 +64,31 @@ const getWeatherImage = (code: number) => {
   return `/weather/${getWeatherTone(code)}-pictogram.png`;
 };
 
+const getImageExtension = (file: File) => {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  if (extension === "jpg" || extension === "jpeg") return "jpg";
+  if (extension === "png") return "png";
+  if (extension === "webp") return "webp";
+  if (extension === "gif") return "gif";
+  return null;
+};
+
+const getChatImageUrl = (path: string) => {
+  return supabase.storage.from(chatImageBucket).getPublicUrl(path).data.publicUrl;
+};
+
+const getStorageSafeRoom = (room: string) => {
+  const prefectureIndex = prefectures.findIndex(
+    (prefecture) => prefecture.name === room
+  );
+
+  if (prefectureIndex >= 0) {
+    return `prefecture-${prefectureIndex + 1}`;
+  }
+
+  return `room-${crypto.randomUUID()}`;
+};
+
 const getNearestPrefecture = (lat: number, lon: number) => {
   return prefectures.reduce((nearest, prefecture) => {
     const nearestDistance =
@@ -82,16 +110,22 @@ export default function Home() {
   const [aiLoading, setAiLoading] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [chatImage, setChatImage] = useState<File | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [viewerCount, setViewerCount] = useState(0);
   const presenceIdRef = useRef<string | null>(null);
+  const chatFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!chatRoom) {
       setChatMessages([]);
       setChatInput("");
+      setChatImage(null);
+      if (chatFileInputRef.current) {
+        chatFileInputRef.current.value = "";
+      }
       setChatError(null);
       setChatLoading(false);
       return;
@@ -103,7 +137,7 @@ export default function Home() {
 
       const { data, error } = await supabase
         .from("weather_chat_messages")
-        .select("id, room, kind, body, created_at")
+        .select("id, room, kind, body, image_path, created_at")
         .eq("room", chatRoom)
         .gte("created_at", getChatExpirationCutoff())
         .order("created_at", { ascending: false })
@@ -283,15 +317,7 @@ export default function Home() {
     }
   };
 
-  const sendChatMessage = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    const body = chatInput.trim();
-    if (!chatRoom || !body || chatSending) return;
-
-    setChatSending(true);
-    setChatError(null);
-
+  const sendTextMessage = async (body: string) => {
     const { data, error } = await supabase
       .from("weather_chat_messages")
       .insert({
@@ -299,7 +325,7 @@ export default function Home() {
         kind: "message",
         body,
       })
-      .select("id, room, kind, body, created_at")
+      .select("id, room, kind, body, image_path, created_at")
       .single();
 
     if (error) {
@@ -315,6 +341,82 @@ export default function Home() {
         return [...messages, inserted].slice(-30);
       });
       setChatInput("");
+    }
+  };
+
+  const sendImageMessage = async (body: string, file: File) => {
+    const extension = getImageExtension(file);
+
+    if (!extension) {
+      setChatError("投稿できる画像は jpg / png / webp / gif です");
+      return;
+    }
+
+    if (file.size > maxChatImageSize) {
+      setChatError("画像は3MB以内にしてください");
+      return;
+    }
+
+    const imagePath = `${getStorageSafeRoom(
+      chatRoom!
+    )}/${crypto.randomUUID()}.${extension}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(chatImageBucket)
+      .upload(imagePath, file, {
+        contentType: file.type,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      setChatError(uploadError.message);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("weather_chat_messages")
+      .insert({
+        room: chatRoom,
+        kind: "image",
+        body: body || "画像",
+        image_path: imagePath,
+      })
+      .select("id, room, kind, body, image_path, created_at")
+      .single();
+
+    if (error) {
+      setChatError(error.message);
+    } else if (data) {
+      const inserted = data as ChatMessage;
+
+      setChatMessages((messages) => {
+        if (messages.some((message) => message.id === inserted.id)) {
+          return messages;
+        }
+
+        return [...messages, inserted].slice(-30);
+      });
+      setChatInput("");
+      setChatImage(null);
+      if (chatFileInputRef.current) {
+        chatFileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const sendChatMessage = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const body = chatInput.trim();
+    if (!chatRoom || (!body && !chatImage) || chatSending) return;
+
+    setChatSending(true);
+    setChatError(null);
+
+    if (chatImage) {
+      await sendImageMessage(body, chatImage);
+    } else {
+      await sendTextMessage(body);
     }
 
     setChatSending(false);
@@ -333,7 +435,7 @@ export default function Home() {
         kind: "reaction",
         body,
       })
-      .select("id, room, kind, body, created_at")
+      .select("id, room, kind, body, image_path, created_at")
       .single();
 
     if (error) {
@@ -493,10 +595,21 @@ export default function Home() {
                 chatMessages.map((message) => (
                   <article
                     className={`chat-message chat-message--${message.kind}`}
-                    key={message.id}
-                  >
+                  key={message.id}
+                >
+                  <div className="chat-message-body">
+                    {message.image_path && (
+                      <Image
+                        className="chat-image"
+                        src={getChatImageUrl(message.image_path)}
+                        alt=""
+                        width={520}
+                        height={360}
+                      />
+                    )}
                     <p>{message.body}</p>
-                    <time dateTime={message.created_at}>
+                  </div>
+                  <time dateTime={message.created_at}>
                       {new Date(message.created_at).toLocaleTimeString("ja-JP", {
                         hour: "2-digit",
                         minute: "2-digit",
@@ -537,9 +650,36 @@ export default function Home() {
                   placeholder={`${chatRoom}の天気について投稿`}
                 />
               </label>
+              <div className="chat-actions">
+                <label className="chat-file-button">
+                  画像を追加
+                  <input
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    onChange={(event) => {
+                      setChatImage(event.target.files?.[0] ?? null);
+                    }}
+                    ref={chatFileInputRef}
+                    type="file"
+                  />
+                </label>
+                {chatImage && (
+                  <button
+                    className="chat-file-clear"
+                    onClick={() => {
+                      setChatImage(null);
+                      if (chatFileInputRef.current) {
+                        chatFileInputRef.current.value = "";
+                      }
+                    }}
+                    type="button"
+                  >
+                    {chatImage.name}
+                  </button>
+                )}
+              </div>
               <button
                 className="primary-action"
-                disabled={!chatInput.trim() || chatSending}
+                disabled={(!chatInput.trim() && !chatImage) || chatSending}
                 type="submit"
               >
                 {chatSending ? "送信中..." : "投稿"}
