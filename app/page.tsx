@@ -154,7 +154,7 @@ export default function Home() {
     if (!notificationSupported) return;
 
     const checkSubscription = async () => {
-      const registration = await navigator.serviceWorker.getRegistration();
+      const registration = await navigator.serviceWorker.register("/sw.js");
       const subscription = await registration?.pushManager.getSubscription();
 
       if (!subscription) {
