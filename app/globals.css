@@ -522,6 +522,7 @@ button:disabled {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+  min-width: 0;
 }
 
 .chat-file-button,
@@ -609,6 +610,32 @@ button:disabled {
 
   .chat-stats {
     text-align: left;
+  }
+
+  .chat-form {
+    gap: 10px;
+  }
+
+  .chat-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+  }
+
+  .chat-file-button,
+  .chat-form .primary-action {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .chat-file-clear {
+    grid-column: 1 / -1;
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  .chat-input textarea {
+    min-height: 76px;
   }
 
   .metrics {
