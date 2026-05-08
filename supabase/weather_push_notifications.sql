@@ -37,8 +37,7 @@ for insert
 with check (
   length(endpoint) between 20 and 2048
   and length(room) between 1 and 40
-  and subscription ? 'endpoint'
-  and subscription ? 'keys'
+  and jsonb_typeof(subscription) = 'object'
 );
 
 drop policy if exists "Anyone can update their weather push subscription"
@@ -51,9 +50,16 @@ using (true)
 with check (
   length(endpoint) between 20 and 2048
   and length(room) between 1 and 40
-  and subscription ? 'endpoint'
-  and subscription ? 'keys'
+  and jsonb_typeof(subscription) = 'object'
 );
+
+drop policy if exists "Anyone can read weather push subscriptions for upsert"
+on public.weather_push_subscriptions;
+
+create policy "Anyone can read weather push subscriptions for upsert"
+on public.weather_push_subscriptions
+for select
+using (true);
 
 create schema if not exists vault;
 create extension if not exists supabase_vault with schema vault;
