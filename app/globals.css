@@ -491,11 +491,15 @@ button:disabled {
 .chat-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "input input"
+    "actions send";
   gap: 12px;
   align-items: end;
 }
 
 .chat-input {
+  grid-area: input;
   display: grid;
   gap: 8px;
 }
@@ -518,11 +522,17 @@ button:disabled {
 }
 
 .chat-actions {
+  grid-area: actions;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   min-width: 0;
+}
+
+.chat-form .primary-action {
+  grid-area: send;
+  justify-self: end;
 }
 
 .chat-file-button,
@@ -613,12 +623,16 @@ button:disabled {
   }
 
   .chat-form {
+    grid-template-areas:
+      "input"
+      "actions"
+      "send";
     gap: 10px;
   }
 
   .chat-actions {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
     align-items: stretch;
   }
 
@@ -629,7 +643,6 @@ button:disabled {
   }
 
   .chat-file-clear {
-    grid-column: 1 / -1;
     max-width: none;
     justify-content: flex-start;
   }
