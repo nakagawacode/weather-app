@@ -35,6 +35,8 @@ type ChatMessage = {
 const weatherReactions = ["雨きた", "暑い", "寒い", "風つよい", "洗濯いける"];
 const chatImageBucket = "weather-chat-images";
 const maxChatImageSize = 3 * 1024 * 1024;
+const vapidPublicKey =
+  "BHgkSVu8JOoJfgknTvFXe3BOoPH2kB67A8JlkGJzsG1fmKWpz2bxfxTpig9hoKf388mH60AHw0K5z3t006xXw-4";
 
 const getChatExpirationCutoff = () => {
   return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -77,6 +79,21 @@ const getChatImageUrl = (path: string) => {
   return supabase.storage.from(chatImageBucket).getPublicUrl(path).data.publicUrl;
 };
 
+const urlBase64ToUint8Array = (base64String: string) => {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = `${base64String}${padding}`
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; i += 1) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+
+  return outputArray;
+};
+
 const getStorageSafeRoom = (room: string) => {
   const prefectureIndex = prefectures.findIndex(
     (prefecture) => prefecture.name === room
@@ -114,9 +131,22 @@ export default function Home() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [notificationSupported, setNotificationSupported] = useState(false);
+  const [notificationLoading, setNotificationLoading] = useState(false);
+  const [notificationStatus, setNotificationStatus] = useState(
+    "地域を選ぶと朝の通知を登録できます。"
+  );
   const [viewerCount, setViewerCount] = useState(0);
   const presenceIdRef = useRef<string | null>(null);
   const chatFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setNotificationSupported(
+      "serviceWorker" in navigator &&
+        "PushManager" in window &&
+        "Notification" in window
+    );
+  }, []);
 
   useEffect(() => {
     if (!chatRoom) {
@@ -455,6 +485,60 @@ export default function Home() {
     setChatSending(false);
   };
 
+  const registerDailyNotification = async () => {
+    if (!chatRoom || notificationLoading) return;
+
+    setNotificationLoading(true);
+    setNotificationStatus("");
+
+    try {
+      if (!notificationSupported) {
+        throw new Error("このブラウザはWeb Push通知に対応していません");
+      }
+
+      if (!vapidPublicKey) {
+        throw new Error("通知用の公開鍵が設定されていません");
+      }
+
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        throw new Error("通知が許可されませんでした");
+      }
+
+      const registration = await navigator.serviceWorker.register("/sw.js");
+      const subscription =
+        (await registration.pushManager.getSubscription()) ??
+        (await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+        }));
+
+      const { error } = await supabase
+        .from("weather_push_subscriptions")
+        .upsert(
+          {
+            endpoint: subscription.endpoint,
+            subscription: subscription.toJSON(),
+            room: chatRoom,
+            enabled: true,
+          },
+          { onConflict: "endpoint" }
+        );
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      setNotificationStatus(
+        `${chatRoom}の天気を毎朝8時に通知します。iPhoneではホーム画面のアイコンから開いて登録してください。`
+      );
+    } catch (err: unknown) {
+      setNotificationStatus(getErrorMessage(err));
+    } finally {
+      setNotificationLoading(false);
+    }
+  };
+
   return (
     <main className="weather-shell">
       <section className="weather-console" aria-label="Weather dashboard">
@@ -562,6 +646,24 @@ export default function Home() {
             <p className="comment-label">Advice</p>
             <p>{comment}</p>
           </aside>
+        )}
+
+        {chatRoom && (
+          <section className="notification-panel" aria-label="毎朝の天気通知">
+            <div>
+              <p className="comment-label">Morning Push</p>
+              <h2>毎朝8時に{chatRoom}の天気を通知</h2>
+              <p>{notificationStatus}</p>
+            </div>
+            <button
+              className="secondary-action"
+              disabled={notificationLoading || !notificationSupported}
+              onClick={registerDailyNotification}
+              type="button"
+            >
+              {notificationLoading ? "登録中..." : "通知を登録"}
+            </button>
+          </section>
         )}
 
         {!weather && !loading && (
