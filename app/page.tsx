@@ -32,7 +32,7 @@ type ChatMessage = {
   created_at: string;
 };
 
-const weatherReactions = ["雨きた", "暑い", "風つよい", "洗濯いける"];
+const weatherReactions = ["雨きた", "暑い", "寒い", "風つよい", "洗濯いける"];
 const chatImageBucket = "weather-chat-images";
 const maxChatImageSize = 3 * 1024 * 1024;
 
