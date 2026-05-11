@@ -17,6 +17,7 @@ type CurrentWeather = {
   temperature: number;
   weathercode: number;
   windspeed: number;
+  precipitationProbability: number | null;
 };
 
 const prefectures: Prefecture[] = [
@@ -81,7 +82,7 @@ const getWeatherLabel = (code: number) => {
 
 const fetchWeather = async (prefecture: Prefecture): Promise<CurrentWeather> => {
   const response = await fetch(
-    `https://api.open-meteo.com/v1/forecast?latitude=${prefecture.lat}&longitude=${prefecture.lon}&current_weather=true`
+    `https://api.open-meteo.com/v1/forecast?latitude=${prefecture.lat}&longitude=${prefecture.lon}&current_weather=true&daily=precipitation_probability_max&timezone=Asia%2FTokyo&forecast_days=1`
   );
   const data = await response.json();
 
@@ -89,7 +90,11 @@ const fetchWeather = async (prefecture: Prefecture): Promise<CurrentWeather> => 
     throw new Error(`${prefecture.name}の天気データが取得できません`);
   }
 
-  return data.current_weather as CurrentWeather;
+  return {
+    ...data.current_weather,
+    precipitationProbability:
+      data.daily?.precipitation_probability_max?.[0] ?? null,
+  } as CurrentWeather;
 };
 
 const generateAdvice = async (weather: CurrentWeather) => {
@@ -106,6 +111,12 @@ const generateAdvice = async (weather: CurrentWeather) => {
 
 気温: ${weather.temperature}℃
 天気コード: ${weather.weathercode}
+風速: ${weather.windspeed}m/s
+今日の最大降水確率: ${
+    weather.precipitationProbability === null
+      ? "不明"
+      : `${weather.precipitationProbability}%`
+  }
 
 ・短く
 ・わかりやすく
@@ -139,6 +150,14 @@ const generateAdvice = async (weather: CurrentWeather) => {
 Deno.serve(async (request: Request) => {
   if (request.method !== "POST") {
     return jsonResponse({ ok: false, message: "Method not allowed" }, 405);
+  }
+
+  const notificationSecret = Deno.env.get("NOTIFICATION_SECRET");
+  if (
+    notificationSecret &&
+    request.headers.get("x-notification-secret") !== notificationSecret
+  ) {
+    return jsonResponse({ ok: false, message: "Unauthorized" }, 401);
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -196,7 +215,11 @@ Deno.serve(async (request: Request) => {
       title: `${room}の朝の天気`,
       body: `${getWeatherLabel(weather.weathercode)} / ${Math.round(
         weather.temperature
-      )}℃。${advice}`,
+      )}℃ / 降水確率${
+        weather.precipitationProbability === null
+          ? "不明"
+          : `${weather.precipitationProbability}%`
+      }。${advice}`,
       url: "/",
     });
 

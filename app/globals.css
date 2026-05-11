@@ -278,13 +278,18 @@ button:disabled {
 .metrics {
   grid-area: metrics;
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   border-top: 1px solid rgba(32, 32, 29, 0.18);
   border-bottom: 1px solid rgba(32, 32, 29, 0.18);
 }
 
 .metrics div {
   padding: 14px 0;
+}
+
+.metrics div + div {
+  padding-left: 16px;
+  border-left: 1px solid rgba(32, 32, 29, 0.18);
 }
 
 .metrics dd {

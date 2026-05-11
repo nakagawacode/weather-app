@@ -19,6 +19,11 @@ Deno.serve(async (request: Request) => {
     return jsonResponse({ ok: false, message: "Method not allowed" }, 405);
   }
 
+  const cleanupSecret = Deno.env.get("CLEANUP_SECRET");
+  if (cleanupSecret && request.headers.get("x-cleanup-secret") !== cleanupSecret) {
+    return jsonResponse({ ok: false, message: "Unauthorized" }, 401);
+  }
+
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 

@@ -6,6 +6,8 @@ create extension if not exists pg_net with schema extensions;
 -- Replace these placeholder values before running this file in Supabase SQL Editor.
 -- project_url: https://YOUR_PROJECT_REF.supabase.co
 -- anon_key: Project Settings > API Keys > anon/public key
+-- cleanup_secret: Any long random string. Use the same value for the
+-- Supabase Edge Function CLEANUP_SECRET secret.
 
 select vault.create_secret(
   'https://YOUR_PROJECT_REF.supabase.co',
@@ -42,9 +44,11 @@ select cron.schedule(
       url := (select decrypted_secret from vault.decrypted_secrets where name = 'project_url') || '/functions/v1/cleanup-chat',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key')
+        'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
+        'x-cleanup-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'cleanup_secret')
       ),
-      body := '{}'::jsonb
+      body := '{}'::jsonb,
+      timeout_milliseconds := 30000
     );
   $$
 );

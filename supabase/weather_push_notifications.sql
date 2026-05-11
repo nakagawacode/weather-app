@@ -70,6 +70,8 @@ create extension if not exists pg_net with schema extensions;
 -- with your own values:
 -- project_url: https://YOUR_PROJECT_REF.supabase.co
 -- anon_key: Project Settings > API Keys > anon/public key
+-- notification_secret: Any long random string. Use the same value for the
+-- Supabase Edge Function NOTIFICATION_SECRET secret.
 
 select cron.unschedule(jobid)
 from cron.job
@@ -83,9 +85,11 @@ select cron.schedule(
       url := (select decrypted_secret from vault.decrypted_secrets where name = 'project_url') || '/functions/v1/send-daily-weather-notifications',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key')
+        'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'anon_key'),
+        'x-notification-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'notification_secret')
       ),
-      body := '{}'::jsonb
+      body := '{}'::jsonb,
+      timeout_milliseconds := 30000
     );
   $$
 );

@@ -1,6 +1,8 @@
 type CommentRequest = {
   temperature: number;
   weather: number;
+  windspeed: number;
+  precipitationProbability: number | null;
 };
 
 type CommentResponse = {

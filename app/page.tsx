@@ -21,6 +21,7 @@ type Weather = {
   temperature: number;
   weathercode: number;
   windspeed: number;
+  precipitationProbability: number | null;
 };
 
 type ChatMessage = {
@@ -339,17 +340,8 @@ export default function Home() {
     setError(null);
 
     try {
-      const res = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`
-      );
-
-      const data = await res.json();
-
-      if (!data.current_weather) {
-        throw new Error("天気データが取得できません");
-      }
-
-      setWeather(data.current_weather);
+      const weatherData = await fetchWeather(lat, lon);
+      setWeather(weatherData);
       setCity({ name: "現在地", lat, lon });
       setChatRoom(getNearestPrefecture(lat, lon).name);
     } catch (err: unknown) {
@@ -368,6 +360,8 @@ export default function Home() {
       const data = await fetchComment({
         temperature: weather.temperature,
         weather: weather.weathercode,
+        windspeed: weather.windspeed,
+        precipitationProbability: weather.precipitationProbability,
       });
       console.log("COMMENT RAW:", data);
       setComment(data.message);
@@ -715,6 +709,14 @@ export default function Home() {
             </div>
 
             <dl className="metrics">
+              <div>
+                <dt>降水確率</dt>
+                <dd>
+                  {weather.precipitationProbability === null
+                    ? "不明"
+                    : `${weather.precipitationProbability}%`}
+                </dd>
+              </div>
               <div>
                 <dt>風速</dt>
                 <dd>{weather.windspeed} m/s</dd>
