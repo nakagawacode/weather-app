@@ -20,6 +20,11 @@ type CurrentWeather = {
   precipitationProbability: number | null;
 };
 
+type AdviceResult = {
+  text: string;
+  warning: string | null;
+};
+
 const prefectures: Prefecture[] = [
   { name: "北海道", lat: 43.06417, lon: 141.34694 },
   { name: "青森", lat: 40.82444, lon: 140.74 },
@@ -84,6 +89,13 @@ const fetchWeather = async (prefecture: Prefecture): Promise<CurrentWeather> => 
   const response = await fetch(
     `https://api.open-meteo.com/v1/forecast?latitude=${prefecture.lat}&longitude=${prefecture.lon}&current_weather=true&daily=precipitation_probability_max&timezone=Asia%2FTokyo&forecast_days=1`
   );
+
+  if (!response.ok) {
+    throw new Error(
+      `${prefecture.name}の天気データ取得に失敗しました: ${response.status}`
+    );
+  }
+
   const data = await response.json();
 
   if (!data.current_weather) {
@@ -97,11 +109,18 @@ const fetchWeather = async (prefecture: Prefecture): Promise<CurrentWeather> => 
   } as CurrentWeather;
 };
 
-const generateAdvice = async (weather: CurrentWeather) => {
+const generateAdvice = async (
+  room: string,
+  weather: CurrentWeather
+): Promise<AdviceResult> => {
   const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
+  const fallbackAdvice = "外出前に空模様を確認して、服装を調整しましょう。";
 
   if (!geminiApiKey) {
-    return "外出前に空模様を確認して、服装を調整しましょう。";
+    return {
+      text: fallbackAdvice,
+      warning: `${room}: Gemini APIキーが未設定のため固定文を使用しました`,
+    };
   }
 
   const prompt = `
@@ -123,28 +142,50 @@ const generateAdvice = async (weather: CurrentWeather) => {
 ・外出のアドバイスを含める
 `;
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [{ text: prompt }],
-          },
-        ],
-      }),
-    }
-  );
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [{ text: prompt }],
+            },
+          ],
+        }),
+      }
+    );
 
-  const data = await response.json();
-  return (
-    data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ??
-    "外出前に空模様を確認して、服装を調整しましょう。"
-  );
+    if (!response.ok) {
+      return {
+        text: fallbackAdvice,
+        warning: `${room}: Gemini APIが失敗したため固定文を使用しました: ${response.status}`,
+      };
+    }
+
+    const data = await response.json();
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+    if (!text) {
+      return {
+        text: fallbackAdvice,
+        warning: `${room}: Gemini APIのレスポンス本文が空のため固定文を使用しました`,
+      };
+    }
+
+    return { text, warning: null };
+  } catch (error) {
+    return {
+      text: fallbackAdvice,
+      warning: `${room}: Gemini API呼び出しで例外が発生したため固定文を使用しました: ${
+        error instanceof Error ? error.message : "unknown error"
+      }`,
+    };
+  }
 };
 
 Deno.serve(async (request: Request) => {
@@ -204,43 +245,65 @@ Deno.serve(async (request: Request) => {
   let sent = 0;
   let failed = 0;
   const disabledSubscriptionIds: string[] = [];
+  const roomErrors: string[] = [];
+  const adviceWarnings: string[] = [];
 
   for (const [room, roomSubscriptions] of subscriptionsByRoom) {
-    const prefecture = prefectures.find((item) => item.name === room);
-    if (!prefecture) continue;
-
-    const weather = await fetchWeather(prefecture);
-    const advice = await generateAdvice(weather);
-    const payload = JSON.stringify({
-      title: `${room}の朝の天気`,
-      body: `${getWeatherLabel(weather.weathercode)} / ${Math.round(
-        weather.temperature
-      )}℃ / 降水確率${
-        weather.precipitationProbability === null
-          ? "不明"
-          : `${weather.precipitationProbability}%`
-      }。${advice}`,
-      url: "/",
-    });
-
-    const results = await Promise.allSettled(
-      roomSubscriptions.map((item) =>
-        webpush.sendNotification(item.subscription, payload)
-      )
-    );
-
-    results.forEach((result, index) => {
-      if (result.status === "fulfilled") {
-        sent += 1;
-        return;
+    try {
+      const prefecture = prefectures.find((item) => item.name === room);
+      if (!prefecture) {
+        failed += roomSubscriptions.length;
+        roomErrors.push(`${room}: 対応する都道府県がありません`);
+        continue;
       }
 
-      failed += 1;
-      const reason = result.reason as { statusCode?: number };
-      if (reason.statusCode === 404 || reason.statusCode === 410) {
-        disabledSubscriptionIds.push(roomSubscriptions[index].id);
+      const weather = await fetchWeather(prefecture);
+      const advice = await generateAdvice(room, weather);
+
+      if (advice.warning) {
+        console.warn(advice.warning);
+        adviceWarnings.push(advice.warning);
       }
-    });
+
+      const payload = JSON.stringify({
+        title: `${room}の朝の天気`,
+        body: `${getWeatherLabel(weather.weathercode)} / ${Math.round(
+          weather.temperature
+        )}℃ / 降水確率${
+          weather.precipitationProbability === null
+            ? "不明"
+            : `${weather.precipitationProbability}%`
+        }。${advice.text}`,
+        url: "/",
+      });
+
+      const results = await Promise.allSettled(
+        roomSubscriptions.map((item) =>
+          webpush.sendNotification(item.subscription, payload)
+        )
+      );
+
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          sent += 1;
+          return;
+        }
+
+        failed += 1;
+        const reason = result.reason as { statusCode?: number };
+        if (reason.statusCode === 404 || reason.statusCode === 410) {
+          disabledSubscriptionIds.push(roomSubscriptions[index].id);
+        }
+      });
+    } catch (error) {
+      const message = `${room}: ${
+        error instanceof Error ? error.message : "通知処理に失敗しました"
+      }`;
+
+      console.error(message);
+      failed += roomSubscriptions.length;
+      roomErrors.push(message);
+    }
   }
 
   if (disabledSubscriptionIds.length > 0) {
@@ -256,5 +319,7 @@ Deno.serve(async (request: Request) => {
     sent,
     failed,
     disabled: disabledSubscriptionIds.length,
+    roomErrors,
+    adviceWarnings,
   });
 });
