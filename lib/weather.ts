@@ -1,4 +1,11 @@
-export const fetchWeather = async (lat: number, lon: number) => {
+export type Weather = {
+  temperature: number;
+  weathercode: number;
+  windspeed: number;
+  precipitationProbability: number | null;
+};
+
+export const fetchWeather = async (lat: number, lon: number): Promise<Weather> => {
   const res = await fetch(
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&daily=precipitation_probability_max&timezone=Asia%2FTokyo&forecast_days=1`
   );
@@ -13,5 +20,5 @@ export const fetchWeather = async (lat: number, lon: number) => {
     ...data.current_weather,
     precipitationProbability:
       data.daily?.precipitation_probability_max?.[0] ?? null,
-  };
+  } as Weather;
 };

@@ -1,122 +1,20 @@
 "use client";
 
-import Image from "next/image";
-import { FormEvent, useEffect, useRef, useState } from "react";
-import { prefectures } from "@/data/prefectures";
-import { fetchWeather } from "@/lib/weather";
+import { useRef, useState } from "react";
+import { AreaSelector } from "@/components/AreaSelector";
+import { ChatPanel } from "@/components/ChatPanel";
+import { DailyNotificationPanel } from "@/components/DailyNotificationPanel";
+import { WeatherPanel } from "@/components/WeatherPanel";
+import { useChatRoom } from "@/hooks/use-chat-room";
+import { useDailyNotification } from "@/hooks/use-daily-notification";
 import { fetchComment } from "@/lib/comment";
-import { supabase } from "@/lib/supabase";
-
-type Prefecture = (typeof prefectures)[number];
-
-type CurrentLocation = {
-  name: "現在地";
-  lat: number;
-  lon: number;
-};
-
-type SelectedArea = Prefecture | CurrentLocation;
-
-type Weather = {
-  temperature: number;
-  weathercode: number;
-  windspeed: number;
-  precipitationProbability: number | null;
-};
-
-type ChatMessage = {
-  id: string;
-  room: string;
-  kind: "message" | "reaction" | "image";
-  body: string;
-  image_path: string | null;
-  created_at: string;
-};
-
-const weatherReactions = ["雨きた", "暑い", "寒い", "風つよい", "洗濯いける"];
-const chatImageBucket = "weather-chat-images";
-const maxChatImageSize = 3 * 1024 * 1024;
-const vapidPublicKey =
-  "BHgkSVu8JOoJfgknTvFXe3BOoPH2kB67A8JlkGJzsG1fmKWpz2bxfxTpig9hoKf388mH60AHw0K5z3t006xXw-4";
-
-const getChatExpirationCutoff = () => {
-  return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-};
-
-const getErrorMessage = (error: unknown) => {
-  return error instanceof Error ? error.message : "予期しないエラーが発生しました";
-};
-
-const getWeatherLabel = (code: number) => {
-  if (code === 0) return "晴れ";
-  if (code <= 3) return "くもり";
-  if (code <= 48) return "霧";
-  if (code <= 67) return "雨";
-  return "不明";
-};
-
-const getWeatherTone = (code: number) => {
-  if (code === 0) return "clear";
-  if (code <= 3) return "cloud";
-  if (code <= 48) return "mist";
-  if (code <= 67) return "rain";
-  return "unknown";
-};
-
-const getWeatherImage = (code: number) => {
-  return `/weather/${getWeatherTone(code)}-pictogram.png`;
-};
-
-const getImageExtension = (file: File) => {
-  const extension = file.name.split(".").pop()?.toLowerCase();
-  if (extension === "jpg" || extension === "jpeg") return "jpg";
-  if (extension === "png") return "png";
-  if (extension === "webp") return "webp";
-  if (extension === "gif") return "gif";
-  return null;
-};
-
-const getChatImageUrl = (path: string) => {
-  return supabase.storage.from(chatImageBucket).getPublicUrl(path).data.publicUrl;
-};
-
-const urlBase64ToUint8Array = (base64String: string) => {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = `${base64String}${padding}`
-    .replace(/-/g, "+")
-    .replace(/_/g, "/");
-  const rawData = window.atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-
-  for (let i = 0; i < rawData.length; i += 1) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
-
-  return outputArray;
-};
-
-const getStorageSafeRoom = (room: string) => {
-  const prefectureIndex = prefectures.findIndex(
-    (prefecture) => prefecture.name === room
-  );
-
-  if (prefectureIndex >= 0) {
-    return `prefecture-${prefectureIndex + 1}`;
-  }
-
-  return `room-${crypto.randomUUID()}`;
-};
-
-const getNearestPrefecture = (lat: number, lon: number) => {
-  return prefectures.reduce((nearest, prefecture) => {
-    const nearestDistance =
-      (nearest.lat - lat) ** 2 + (nearest.lon - lon) ** 2;
-    const prefectureDistance =
-      (prefecture.lat - lat) ** 2 + (prefecture.lon - lon) ** 2;
-
-    return prefectureDistance < nearestDistance ? prefecture : nearest;
-  }, prefectures[0]);
-};
+import {
+  getNearestPrefecture,
+  Prefecture,
+  SelectedArea,
+} from "@/lib/prefecture";
+import { fetchWeather, Weather } from "@/lib/weather";
+import { getErrorMessage } from "@/lib/weather-display";
 
 export default function Home() {
   const [weather, setWeather] = useState<Weather | null>(null);
@@ -126,193 +24,44 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [comment, setComment] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [chatInput, setChatInput] = useState("");
-  const [chatImage, setChatImage] = useState<File | null>(null);
-  const [chatLoading, setChatLoading] = useState(false);
-  const [chatSending, setChatSending] = useState(false);
-  const [chatError, setChatError] = useState<string | null>(null);
-  const [notificationSupported, setNotificationSupported] = useState(false);
-  const [notificationLoading, setNotificationLoading] = useState(false);
-  const [notificationEnabled, setNotificationEnabled] = useState(false);
-  const [notificationRoom, setNotificationRoom] = useState<string | null>(null);
-  const [notificationMessage, setNotificationMessage] = useState<string | null>(
-    null
-  );
-  const [viewerCount, setViewerCount] = useState(0);
-  const presenceIdRef = useRef<string | null>(null);
   const chatFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
-    setNotificationSupported(
-      "serviceWorker" in navigator &&
-        "PushManager" in window &&
-        "Notification" in window
-    );
-  }, []);
+  const {
+    chatError,
+    chatImage,
+    chatInput,
+    chatLoading,
+    chatMessages,
+    chatSending,
+    clearSelectedImage,
+    sendChatMessage,
+    sendReaction,
+    setChatImage,
+    setChatInput,
+    viewerCount,
+  } = useChatRoom(chatRoom, chatFileInputRef);
 
-  useEffect(() => {
-    if (!notificationSupported) return;
+  const {
+    isNotificationForCurrentRoom,
+    notificationButtonLabel,
+    notificationDescription,
+    notificationLoading,
+    notificationSupported,
+    notificationTitle,
+    registerDailyNotification,
+    unregisterDailyNotification,
+  } = useDailyNotification(chatRoom);
 
-    const checkSubscription = async () => {
-      const registration = await navigator.serviceWorker.register("/sw.js");
-      const subscription = await registration?.pushManager.getSubscription();
-
-      if (!subscription) {
-        setNotificationEnabled(false);
-        setNotificationRoom(null);
-        return;
-      }
-
-      setNotificationEnabled(true);
-
-      const { data } = await supabase
-        .from("weather_push_subscriptions")
-        .select("room, enabled")
-        .eq("endpoint", subscription.endpoint)
-        .maybeSingle();
-
-      if (data?.enabled && typeof data.room === "string") {
-        setNotificationRoom(data.room);
-      }
-    };
-
-    checkSubscription();
-  }, [notificationSupported]);
-
-  useEffect(() => {
-    if (!chatRoom) {
-      setChatMessages([]);
-      setChatInput("");
-      setChatImage(null);
-      if (chatFileInputRef.current) {
-        chatFileInputRef.current.value = "";
-      }
-      setChatError(null);
-      setChatLoading(false);
-      return;
-    }
-
-    const loadChatMessages = async () => {
-      setChatLoading(true);
-      setChatError(null);
-
-      const { data, error } = await supabase
-        .from("weather_chat_messages")
-        .select("id, room, kind, body, image_path, created_at")
-        .eq("room", chatRoom)
-        .gte("created_at", getChatExpirationCutoff())
-        .order("created_at", { ascending: false })
-        .limit(30);
-
-      if (error) {
-        setChatError(error.message);
-        setChatMessages([]);
-      } else {
-        setChatMessages([...(data as ChatMessage[])].reverse());
-      }
-
-      setChatLoading(false);
-    };
-
-    loadChatMessages();
-  }, [chatRoom]);
-
-  useEffect(() => {
-    if (!chatRoom) return;
-
-    const channel = supabase
-      .channel(`weather-chat:${chatRoom}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "weather_chat_messages",
-          filter: `room=eq.${chatRoom}`,
-        },
-        (payload) => {
-          const incoming = payload.new as ChatMessage;
-
-          setChatMessages((messages) => {
-            if (messages.some((message) => message.id === incoming.id)) {
-              return messages;
-            }
-
-            return [...messages, incoming].slice(-30);
-          });
-        }
-      )
-      .subscribe((status) => {
-        if (status === "CHANNEL_ERROR") {
-          setChatError("Realtimeの接続に失敗しました");
-        }
-      });
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [chatRoom]);
-
-  useEffect(() => {
-    if (!chatRoom) {
-      setViewerCount(0);
-      return;
-    }
-
-    if (!presenceIdRef.current) {
-      presenceIdRef.current = crypto.randomUUID();
-    }
-
-    const channel = supabase.channel(`weather-presence:${chatRoom}`, {
-      config: {
-        presence: {
-          key: presenceIdRef.current,
-        },
-      },
-    });
-
-    const updateViewerCount = () => {
-      const state = channel.presenceState() as Record<string, unknown[]>;
-      const count = Object.values(state).reduce(
-        (total, presences) => total + presences.length,
-        0
-      );
-
-      setViewerCount(count);
-    };
-
-    channel
-      .on("presence", { event: "sync" }, updateViewerCount)
-      .subscribe(async (status) => {
-        if (status === "SUBSCRIBED") {
-          await channel.track({
-            room: chatRoom,
-            online_at: new Date().toISOString(),
-          });
-        }
-
-        if (status === "CHANNEL_ERROR") {
-          setViewerCount(0);
-        }
-      });
-
-    return () => {
-      setViewerCount(0);
-      supabase.removeChannel(channel);
-    };
-  }, [chatRoom]);
-
-  const getWeather = async (p: Prefecture) => {
+  const getWeather = async (prefecture: Prefecture) => {
     setLoading(true);
     setError(null);
     setComment(null);
 
     try {
-      const weatherData = await fetchWeather(p.lat, p.lon);
+      const weatherData = await fetchWeather(prefecture.lat, prefecture.lon);
       setWeather(weatherData);
-      setCity(p);
-      setChatRoom(p.name);
+      setCity(prefecture);
+      setChatRoom(prefecture.name);
     } catch (err: unknown) {
       setError(getErrorMessage(err));
     } finally {
@@ -320,24 +69,10 @@ export default function Home() {
     }
   };
 
-  const getLocationWeather = () => {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = pos.coords.latitude;
-        const lon = pos.coords.longitude;
-
-        getWeatherByLocation(lat, lon);
-      },
-      (err) => {
-        console.error(err);
-        alert("位置情報の取得に失敗しました");
-      }
-    );
-  };
-
   const getWeatherByLocation = async (lat: number, lon: number) => {
     setLoading(true);
     setError(null);
+    setComment(null);
 
     try {
       const weatherData = await fetchWeather(lat, lon);
@@ -349,6 +84,21 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const getLocationWeather = () => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        getWeatherByLocation(
+          position.coords.latitude,
+          position.coords.longitude
+        );
+      },
+      (err) => {
+        console.error(err);
+        alert("位置情報の取得に失敗しました");
+      }
+    );
   };
 
   const getComment = async () => {
@@ -363,7 +113,6 @@ export default function Home() {
         windspeed: weather.windspeed,
         precipitationProbability: weather.precipitationProbability,
       });
-      console.log("COMMENT RAW:", data);
       setComment(data.message);
     } catch {
       setComment("AIの取得に失敗しました");
@@ -371,264 +120,6 @@ export default function Home() {
       setAiLoading(false);
     }
   };
-
-  const sendTextMessage = async (body: string) => {
-    const { data, error } = await supabase
-      .from("weather_chat_messages")
-      .insert({
-        room: chatRoom,
-        kind: "message",
-        body,
-      })
-      .select("id, room, kind, body, image_path, created_at")
-      .single();
-
-    if (error) {
-      setChatError(error.message);
-    } else if (data) {
-      const inserted = data as ChatMessage;
-
-      setChatMessages((messages) => {
-        if (messages.some((message) => message.id === inserted.id)) {
-          return messages;
-        }
-
-        return [...messages, inserted].slice(-30);
-      });
-      setChatInput("");
-    }
-  };
-
-  const sendImageMessage = async (body: string, file: File) => {
-    const extension = getImageExtension(file);
-
-    if (!extension) {
-      setChatError("投稿できる画像は jpg / png / webp / gif です");
-      return;
-    }
-
-    if (file.size > maxChatImageSize) {
-      setChatError("画像は3MB以内にしてください");
-      return;
-    }
-
-    const imagePath = `${getStorageSafeRoom(
-      chatRoom!
-    )}/${crypto.randomUUID()}.${extension}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from(chatImageBucket)
-      .upload(imagePath, file, {
-        contentType: file.type,
-        upsert: false,
-      });
-
-    if (uploadError) {
-      setChatError(uploadError.message);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("weather_chat_messages")
-      .insert({
-        room: chatRoom,
-        kind: "image",
-        body: body || "画像",
-        image_path: imagePath,
-      })
-      .select("id, room, kind, body, image_path, created_at")
-      .single();
-
-    if (error) {
-      setChatError(error.message);
-    } else if (data) {
-      const inserted = data as ChatMessage;
-
-      setChatMessages((messages) => {
-        if (messages.some((message) => message.id === inserted.id)) {
-          return messages;
-        }
-
-        return [...messages, inserted].slice(-30);
-      });
-      setChatInput("");
-      setChatImage(null);
-      if (chatFileInputRef.current) {
-        chatFileInputRef.current.value = "";
-      }
-    }
-  };
-
-  const sendChatMessage = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    const body = chatInput.trim();
-    if (!chatRoom || (!body && !chatImage) || chatSending) return;
-
-    setChatSending(true);
-    setChatError(null);
-
-    if (chatImage) {
-      await sendImageMessage(body, chatImage);
-    } else {
-      await sendTextMessage(body);
-    }
-
-    setChatSending(false);
-  };
-
-  const sendReaction = async (body: string) => {
-    if (!chatRoom || chatSending) return;
-
-    setChatSending(true);
-    setChatError(null);
-
-    const { data, error } = await supabase
-      .from("weather_chat_messages")
-      .insert({
-        room: chatRoom,
-        kind: "reaction",
-        body,
-      })
-      .select("id, room, kind, body, image_path, created_at")
-      .single();
-
-    if (error) {
-      setChatError(error.message);
-    } else if (data) {
-      const inserted = data as ChatMessage;
-
-      setChatMessages((messages) => {
-        if (messages.some((message) => message.id === inserted.id)) {
-          return messages;
-        }
-
-        return [...messages, inserted].slice(-30);
-      });
-    }
-
-    setChatSending(false);
-  };
-
-  const registerDailyNotification = async () => {
-    if (!chatRoom || notificationLoading) return;
-
-    setNotificationLoading(true);
-    setNotificationMessage(null);
-
-    try {
-      if (!notificationSupported) {
-        throw new Error("このブラウザはWeb Push通知に対応していません");
-      }
-
-      if (!vapidPublicKey) {
-        throw new Error("通知用の公開鍵が設定されていません");
-      }
-
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") {
-        throw new Error("通知が許可されませんでした");
-      }
-
-      const registration = await navigator.serviceWorker.register("/sw.js");
-      const subscription =
-        (await registration.pushManager.getSubscription()) ??
-        (await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
-        }));
-
-      const { error } = await supabase
-        .from("weather_push_subscriptions")
-        .upsert(
-          {
-            endpoint: subscription.endpoint,
-            subscription: subscription.toJSON(),
-            room: chatRoom,
-            enabled: true,
-          },
-          { onConflict: "endpoint" }
-        );
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      setNotificationMessage(
-        `${chatRoom}の天気を毎朝8時に通知します。iPhoneではホーム画面のアイコンから開いて登録してください。`
-      );
-      setNotificationEnabled(true);
-      setNotificationRoom(chatRoom);
-    } catch (err: unknown) {
-      setNotificationMessage(getErrorMessage(err));
-    } finally {
-      setNotificationLoading(false);
-    }
-  };
-
-  const unregisterDailyNotification = async () => {
-    if (notificationLoading) return;
-
-    setNotificationLoading(true);
-    setNotificationMessage(null);
-
-    try {
-      if (!notificationSupported) {
-        throw new Error("このブラウザはWeb Push通知に対応していません");
-      }
-
-      const registration = await navigator.serviceWorker.getRegistration();
-      const subscription = await registration?.pushManager.getSubscription();
-
-      if (!subscription) {
-        setNotificationEnabled(false);
-        setNotificationRoom(null);
-        setNotificationMessage("この端末では通知が登録されていません。");
-        return;
-      }
-
-      const { error } = await supabase
-        .from("weather_push_subscriptions")
-        .update({ enabled: false })
-        .eq("endpoint", subscription.endpoint);
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      await subscription.unsubscribe();
-      setNotificationEnabled(false);
-      setNotificationRoom(null);
-      setNotificationMessage("毎朝の天気通知を解除しました。");
-    } catch (err: unknown) {
-      setNotificationMessage(getErrorMessage(err));
-    } finally {
-      setNotificationLoading(false);
-    }
-  };
-
-  const isNotificationForCurrentRoom =
-    notificationEnabled && notificationRoom === chatRoom;
-  const notificationTitle =
-    notificationEnabled && notificationRoom
-      ? `毎朝8時に${notificationRoom}の天気を通知中`
-      : chatRoom
-        ? `毎朝8時に${chatRoom}の天気を通知`
-        : "毎朝8時に天気を通知";
-  const notificationDescription =
-    notificationMessage ??
-    (notificationEnabled && notificationRoom
-      ? notificationRoom === chatRoom
-        ? `${notificationRoom}の天気通知が登録されています。`
-        : `現在は${notificationRoom}を通知中です。${chatRoom}に変更できます。`
-      : "選択中の地域の天気、気温、アドバイスを毎朝8時に通知します。");
-  const notificationButtonLabel = notificationLoading
-    ? "処理中..."
-    : isNotificationForCurrentRoom
-      ? "通知を解除"
-      : notificationEnabled
-        ? "通知地域を変更"
-        : "通知を登録";
 
   return (
     <main className="weather-shell">
@@ -640,34 +131,11 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="control-row">
-          <label className="field">
-            <span>Area</span>
-            <select
-              value={city?.name === "現在地" ? "" : city?.name ?? ""}
-              onChange={(e) => {
-                const selected = prefectures.find(
-                  (p) => p.name === e.target.value
-                );
-                if (selected) getWeather(selected);
-              }}
-            >
-              <option value="" disabled>
-                都道府県を選択
-              </option>
-
-              {prefectures.map((p) => (
-                <option key={p.name} value={p.name}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <button onClick={getLocationWeather} className="secondary-action">
-            現在地で見る
-          </button>
-        </div>
+        <AreaSelector
+          city={city}
+          onCurrentLocation={getLocationWeather}
+          onSelectPrefecture={getWeather}
+        />
 
         {loading && (
           <div className="status-message" role="status">
@@ -683,54 +151,11 @@ export default function Home() {
         )}
 
         {weather && !loading && (
-          <section
-            className={`weather-panel weather-panel--${getWeatherTone(
-              weather.weathercode
-            )}`}
-          >
-            <div className="panel-topline">
-              <div>
-                <p className="condition">{getWeatherLabel(weather.weathercode)}</p>
-              </div>
-            </div>
-
-            <Image
-              className="weather-mark"
-              src={getWeatherImage(weather.weathercode)}
-              alt=""
-              aria-hidden="true"
-              width={340}
-              height={340}
-            />
-
-            <div className="temperature-readout">
-              <span>{Math.round(weather.temperature)}</span>
-              <small>°C</small>
-            </div>
-
-            <dl className="metrics">
-              <div>
-                <dt>降水確率</dt>
-                <dd>
-                  {weather.precipitationProbability === null
-                    ? "不明"
-                    : `${weather.precipitationProbability}%`}
-                </dd>
-              </div>
-              <div>
-                <dt>風速</dt>
-                <dd>{weather.windspeed} m/s</dd>
-              </div>
-            </dl>
-
-            <button
-              onClick={getComment}
-              disabled={!weather || aiLoading}
-              className="primary-action"
-            >
-              {aiLoading ? "生成中..." : "天気アドバイスを生成"}
-            </button>
-          </section>
+          <WeatherPanel
+            aiLoading={aiLoading}
+            onGenerateAdvice={getComment}
+            weather={weather}
+          />
         )}
 
         {aiLoading && !weather && (
@@ -748,25 +173,15 @@ export default function Home() {
         )}
 
         {chatRoom && (
-          <section className="notification-panel" aria-label="毎朝の天気通知">
-            <div>
-              <p className="comment-label">Morning Push</p>
-              <h2>{notificationTitle}</h2>
-              <p>{notificationDescription}</p>
-            </div>
-            <button
-              className="secondary-action"
-              disabled={notificationLoading || !notificationSupported}
-              onClick={
-                isNotificationForCurrentRoom
-                  ? unregisterDailyNotification
-                  : registerDailyNotification
-              }
-              type="button"
-            >
-              {notificationButtonLabel}
-            </button>
-          </section>
+          <DailyNotificationPanel
+            buttonLabel={notificationButtonLabel}
+            description={notificationDescription}
+            disabled={notificationLoading || !notificationSupported}
+            isCurrentRoom={isNotificationForCurrentRoom}
+            onRegister={registerDailyNotification}
+            onUnregister={unregisterDailyNotification}
+            title={notificationTitle}
+          />
         )}
 
         {!weather && !loading && (
@@ -777,120 +192,22 @@ export default function Home() {
         )}
 
         {chatRoom && (
-          <section className="chat-panel" aria-label={`${chatRoom}のチャット`}>
-            <div className="chat-header">
-              <div>
-                <p className="comment-label">Local Chat</p>
-                <h2>{chatRoom}の空模様</h2>
-              </div>
-              <div className="chat-stats">
-                <span>閲覧中 {viewerCount}</span>
-                <span>{chatMessages.length} messages</span>
-              </div>
-            </div>
-
-            <div className="chat-log">
-              {chatLoading && <p className="chat-muted">読み込み中...</p>}
-
-              {!chatLoading && chatMessages.length === 0 && (
-                <p className="chat-muted">まだ投稿がありません。</p>
-              )}
-
-              {!chatLoading &&
-                chatMessages.map((message) => (
-                  <article
-                    className={`chat-message chat-message--${message.kind}`}
-                  key={message.id}
-                >
-                  <div className="chat-message-body">
-                    {message.image_path && (
-                      <Image
-                        className="chat-image"
-                        src={getChatImageUrl(message.image_path)}
-                        alt=""
-                        width={520}
-                        height={360}
-                      />
-                    )}
-                    <p>{message.body}</p>
-                  </div>
-                  <time dateTime={message.created_at}>
-                      {new Date(message.created_at).toLocaleTimeString("ja-JP", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </time>
-                  </article>
-                ))}
-            </div>
-
-            <div className="reaction-row" aria-label="天気リアクション">
-              {weatherReactions.map((reaction) => (
-                <button
-                  className="reaction-button"
-                  disabled={chatSending}
-                  key={reaction}
-                  onClick={() => sendReaction(reaction)}
-                  type="button"
-                >
-                  {reaction}
-                </button>
-              ))}
-            </div>
-
-            {chatError && (
-              <p className="chat-error" role="alert">
-                {chatError}
-              </p>
-            )}
-
-            <form className="chat-form" onSubmit={sendChatMessage}>
-              <label className="chat-input">
-                <span>Message</span>
-                <textarea
-                  value={chatInput}
-                  onChange={(event) => setChatInput(event.target.value)}
-                  maxLength={240}
-                  rows={3}
-                  placeholder={`${chatRoom}の天気について投稿`}
-                />
-              </label>
-              <div className="chat-actions">
-                <label className="chat-file-button">
-                  画像を追加
-                  <input
-                    accept="image/jpeg,image/png,image/webp,image/gif"
-                    onChange={(event) => {
-                      setChatImage(event.target.files?.[0] ?? null);
-                    }}
-                    ref={chatFileInputRef}
-                    type="file"
-                  />
-                </label>
-                {chatImage && (
-                  <button
-                    className="chat-file-clear"
-                    onClick={() => {
-                      setChatImage(null);
-                      if (chatFileInputRef.current) {
-                        chatFileInputRef.current.value = "";
-                      }
-                    }}
-                    type="button"
-                  >
-                    {chatImage.name}
-                  </button>
-                )}
-              </div>
-              <button
-                className="primary-action"
-                disabled={(!chatInput.trim() && !chatImage) || chatSending}
-                type="submit"
-              >
-                {chatSending ? "送信中..." : "投稿"}
-              </button>
-            </form>
-          </section>
+          <ChatPanel
+            chatError={chatError}
+            chatFileInputRef={chatFileInputRef}
+            chatImage={chatImage}
+            chatInput={chatInput}
+            chatLoading={chatLoading}
+            chatMessages={chatMessages}
+            chatRoom={chatRoom}
+            chatSending={chatSending}
+            clearSelectedImage={clearSelectedImage}
+            onSubmit={sendChatMessage}
+            sendReaction={sendReaction}
+            setChatImage={setChatImage}
+            setChatInput={setChatInput}
+            viewerCount={viewerCount}
+          />
         )}
       </section>
     </main>
