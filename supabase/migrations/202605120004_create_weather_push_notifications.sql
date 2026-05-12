@@ -66,13 +66,6 @@ create extension if not exists supabase_vault with schema vault;
 create extension if not exists pg_cron with schema extensions;
 create extension if not exists pg_net with schema extensions;
 
--- Run supabase/schedule_cleanup_chat.sql first, or create these Vault secrets here
--- with your own values:
--- project_url: https://YOUR_PROJECT_REF.supabase.co
--- anon_key: Project Settings > API Keys > anon/public key
--- notification_secret: Any long random string. Use the same value for the
--- Supabase Edge Function NOTIFICATION_SECRET secret.
-
 select cron.unschedule(jobid)
 from cron.job
 where jobname = 'send-daily-weather-notifications';
