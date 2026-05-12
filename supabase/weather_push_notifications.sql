@@ -79,7 +79,7 @@ where jobname = 'send-daily-weather-notifications';
 
 select cron.schedule(
   'send-daily-weather-notifications',
-  '20 0 * * *',
+  '0 23 * * *',
   $$
     select net.http_post(
       url := (select decrypted_secret from vault.decrypted_secrets where name = 'project_url') || '/functions/v1/send-daily-weather-notifications',
@@ -89,7 +89,7 @@ select cron.schedule(
         'x-notification-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'notification_secret')
       ),
       body := '{}'::jsonb,
-      timeout_milliseconds := 30000
+      timeout_milliseconds := 60000
     );
   $$
 );
